@@ -3,6 +3,7 @@ import random
 import re
 import shutil
 import textwrap
+import time
 from typing import List, TypedDict
 
 from dotenv import load_dotenv
@@ -48,17 +49,25 @@ categories = [
     "prompt engineering",
 ]
 
-
 def generate_topic(state):
+    print("➡️  Step: Generate Topic")
+    start = time.time()
+
     category = random.choice(categories)
     prompt = PromptTemplate.from_template(
         "Give me a unique and creative software engineering topic in the area of {category} that would make a good 2-minute tutorial."
     )
     topic = llm.predict(prompt.format(category=category))
+
+    end = time.time()
+    print(f"✅ Done: Generate Topic in {end - start:.2f}s")
     return {"topic": topic}
 
 # ========== STEP 2: Generate Tutorial ==========
 def generate_tutorial(state):
+    print("➡️  Step: Generate Tutorial")
+    start = time.time()
+
     topic = state["topic"]
     prompt = PromptTemplate.from_template(
         "Write a ~300-word tutorial on the topic: {topic}. "
@@ -67,13 +76,16 @@ def generate_tutorial(state):
         "No implementation details or technical formatting — just a clean, engaging overview."
     )
     tutorial = llm.predict(prompt.format(topic=topic))
+
+    end = time.time()
+    print(f"✅ Done: Generate Tutorial in {end - start:.2f}s")
     return {"tutorial": tutorial}
-
-
 
 # ========== STEP 3: Generate Per-Paragraph Audio ==========
 def text_to_audio(state):
-    import shutil
+    print("➡️  Step: Text to Audio")
+    start = time.time()
+
     from elevenlabs import ElevenLabs, save, Voice, VoiceSettings
     import pyttsx3
 
@@ -94,7 +106,7 @@ def text_to_audio(state):
                 audio = client.generate(
                     text=paragraph,
                     voice=Voice(
-                        voice_id="rwRSRQs2Lguppd3kDP6p",  # Rachel
+                        voice_id="rwRSRQs2Lguppd3kDP6p",
                         settings=VoiceSettings(
                             stability=0.3,
                             similarity_boost=0.85,
@@ -117,11 +129,15 @@ def text_to_audio(state):
 
         audio_paths.append(audio_path)
 
+    end = time.time()
+    print(f"✅ Done: Text to Audio in {end - start:.2f}s")
     return {"paragraphs": paragraphs, "audio_paths": audio_paths}
 
 # ========== STEP 4: Create Slides ==========
 def create_slides(state):
-    import shutil
+    print("➡️  Step: Create Slides")
+    start = time.time()
+
     if os.path.exists("slides"):
         shutil.rmtree("slides")
     os.makedirs("slides", exist_ok=True)
@@ -132,34 +148,33 @@ def create_slides(state):
     slide_paths = []
 
     for i, paragraph in enumerate(paragraphs):
-        img = Image.new("RGB", (1280, 720), color="#0f172a")  # Dark tech-blue background
+        img = Image.new("RGB", (1280, 720), color="#0f172a")
         draw = ImageDraw.Draw(img)
 
-        # Add optional tech-themed shapes (e.g., gradient bars or circles)
-        draw.rectangle([0, 0, 1280, 20], fill="#2563eb")  # Top bar
-        draw.rectangle([0, 700, 1280, 720], fill="#1e3a8a")  # Bottom bar
+        draw.rectangle([0, 0, 1280, 20], fill="#2563eb")
+        draw.rectangle([0, 700, 1280, 720], fill="#1e3a8a")
 
-        # Use a larger font with good readability
         try:
-            font = ImageFont.truetype("arial.ttf", 40)  # Use system font
+            font = ImageFont.truetype("arial.ttf", 40)
         except:
             font = ImageFont.load_default()
 
-        # Word wrapping
         wrapped = textwrap.fill(paragraph, width=60)
-        text_x = 60
-        text_y = 80
-        draw.text((text_x, text_y), wrapped, fill="white", font=font)
+        draw.text((60, 80), wrapped, fill="white", font=font)
 
         slide_path = f"slides/slide_{i:02}.png"
         img.save(slide_path)
         slide_paths.append(slide_path)
 
+    end = time.time()
+    print(f"✅ Done: Create Slides in {end - start:.2f}s")
     return {"slide_paths": slide_paths}
-
 
 # ========== STEP 5: Create Synced Video ==========
 def create_video(state):
+    print("➡️  Step: Create Video")
+    start = time.time()
+
     topic = state["topic"]
     safe_topic = sanitize_filename(topic)
 
@@ -182,12 +197,14 @@ def create_video(state):
     video_path = os.path.join(output_dir, f"{safe_topic}_tutorial.mp4")
     final.write_videofile(video_path, fps=1)
 
-    # ✅ Clean up temp folders
+    # Clean up
     if os.path.exists("audio"):
         shutil.rmtree("audio")
     if os.path.exists("slides"):
         shutil.rmtree("slides")
 
+    end = time.time()
+    print(f"✅ Done: Create Video in {end - start:.2f}s")
     return {
         "video_path": video_path,
         "slide_paths": slide_paths,
@@ -221,5 +238,11 @@ graph = builder.compile()
 
 # ========== Run the Flow ==========
 if __name__ == "__main__":
+    print("🚀 Starting tutorial generation...\n")
+    start_time = time.time()
+
     final_state = graph.invoke({})
+
+    end_time = time.time()
     print("\n🎉 All done! Your synced video tutorial has been created.")
+    print(f"🕒 Total time: {end_time - start_time:.2f} seconds")
