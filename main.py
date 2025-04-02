@@ -1,6 +1,7 @@
 import os
 import random
 import re
+import shutil
 import textwrap
 from typing import List, TypedDict
 
@@ -61,12 +62,13 @@ def generate_tutorial(state):
     topic = state["topic"]
     prompt = PromptTemplate.from_template(
         "Write a ~300-word tutorial on the topic: {topic}. "
-        "Do not include any code or implementation details. "
-        "The tutorial should be a clear and engaging general overview suitable for a beginner-level audience. "
-        "Avoid technical jargon and focus on explaining the concept and its significance."
+        "Avoid using code blocks, symbols like #, <, *, or any special characters that could confuse text-to-speech. "
+        "Keep the tutorial clear, natural, and spoken-word friendly. "
+        "No implementation details or technical formatting — just a clean, engaging overview."
     )
     tutorial = llm.predict(prompt.format(topic=topic))
     return {"tutorial": tutorial}
+
 
 
 # ========== STEP 3: Generate Per-Paragraph Audio ==========
@@ -124,19 +126,37 @@ def create_slides(state):
         shutil.rmtree("slides")
     os.makedirs("slides", exist_ok=True)
 
+    from PIL import ImageFont
+
     paragraphs = state["paragraphs"]
     slide_paths = []
 
     for i, paragraph in enumerate(paragraphs):
-        img = Image.new("RGB", (1280, 720), color="white")
+        img = Image.new("RGB", (1280, 720), color="#0f172a")  # Dark tech-blue background
         draw = ImageDraw.Draw(img)
-        wrapped = textwrap.fill(paragraph, width=80)
-        draw.text((50, 100), wrapped, fill="black")
+
+        # Add optional tech-themed shapes (e.g., gradient bars or circles)
+        draw.rectangle([0, 0, 1280, 20], fill="#2563eb")  # Top bar
+        draw.rectangle([0, 700, 1280, 720], fill="#1e3a8a")  # Bottom bar
+
+        # Use a larger font with good readability
+        try:
+            font = ImageFont.truetype("arial.ttf", 40)  # Use system font
+        except:
+            font = ImageFont.load_default()
+
+        # Word wrapping
+        wrapped = textwrap.fill(paragraph, width=60)
+        text_x = 60
+        text_y = 80
+        draw.text((text_x, text_y), wrapped, fill="white", font=font)
+
         slide_path = f"slides/slide_{i:02}.png"
         img.save(slide_path)
         slide_paths.append(slide_path)
 
     return {"slide_paths": slide_paths}
+
 
 # ========== STEP 5: Create Synced Video ==========
 def create_video(state):
@@ -161,6 +181,12 @@ def create_video(state):
     final = concatenate_videoclips(clips)
     video_path = os.path.join(output_dir, f"{safe_topic}_tutorial.mp4")
     final.write_videofile(video_path, fps=1)
+
+    # ✅ Clean up temp folders
+    if os.path.exists("audio"):
+        shutil.rmtree("audio")
+    if os.path.exists("slides"):
+        shutil.rmtree("slides")
 
     return {
         "video_path": video_path,
