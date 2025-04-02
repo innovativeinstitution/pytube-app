@@ -23,6 +23,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 USE_ELEVENLABS = os.getenv("USE_ELEVENLABS", "false").lower() == "true"
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
+print(ELEVENLABS_API_KEY)
+
 llm = ChatOpenAI(
     model_name="gpt-4o-mini",
     temperature=0.3,
