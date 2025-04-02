@@ -1,29 +1,21 @@
 import os
 import random
 import re
+import textwrap
 from typing import List, TypedDict
 
 from dotenv import load_dotenv
-import pyttsx3
-import textwrap
 from PIL import Image, ImageDraw
-from moviepy.editor import ImageSequenceClip, AudioFileClip
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-
+from moviepy.editor import concatenate_videoclips, ImageClip, AudioFileClip
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
 
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 USE_ELEVENLABS = os.getenv("USE_ELEVENLABS", "false").lower() == "true"
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-
-print(ELEVENLABS_API_KEY)
 
 llm = ChatOpenAI(
     model_name="gpt-4o-mini",
@@ -39,10 +31,22 @@ def sanitize_filename(name: str) -> str:
 
 # ========== STEP 1: Generate Topic ==========
 categories = [
-    "web development", "algorithms", "clean code", "APIs", "cloud computing",
-    "DevOps", "testing", "design patterns", "CI/CD", "security",
-    "performance optimization", "refactoring", "mobile apps", "containers",
+    "machine learning fundamentals",
+    "natural language processing (NLP)",
+    "computer vision",
+    "AI ethics",
+    "generative AI",
+    "large language models (LLMs)",
+    "AI in healthcare",
+    "AI in finance",
+    "autonomous systems",
+    "AI and creativity",
+    "AI tools and platforms",
+    "AI career paths",
+    "AI model evaluation",
+    "prompt engineering",
 ]
+
 
 def generate_topic(state):
     category = random.choice(categories)
@@ -55,57 +59,72 @@ def generate_topic(state):
 # ========== STEP 2: Generate Tutorial ==========
 def generate_tutorial(state):
     topic = state["topic"]
-    prompt = PromptTemplate.from_template("Write a ~300-word tutorial on the topic: {topic} but don't include hashtags or other characters that would make TTS difficult or awkward.")
+    prompt = PromptTemplate.from_template(
+        "Write a ~300-word tutorial on the topic: {topic}. "
+        "Do not include any code or implementation details. "
+        "The tutorial should be a clear and engaging general overview suitable for a beginner-level audience. "
+        "Avoid technical jargon and focus on explaining the concept and its significance."
+    )
     tutorial = llm.predict(prompt.format(topic=topic))
     return {"tutorial": tutorial}
 
-# ========== STEP 3: Convert to Audio ==========
+
+# ========== STEP 3: Generate Per-Paragraph Audio ==========
 def text_to_audio(state):
+    import shutil
+    from elevenlabs import ElevenLabs, save, Voice, VoiceSettings
+    import pyttsx3
+
     tutorial = state["tutorial"]
-    audio_path = "narration.mp3"
+    paragraphs = [p.strip() for p in tutorial.split("\n") if p.strip()]
+    audio_paths = []
 
-    if USE_ELEVENLABS and ELEVENLABS_API_KEY:
-        try:
-            from elevenlabs import ElevenLabs, save, Voice, VoiceSettings
+    if os.path.exists("audio"):
+        shutil.rmtree("audio")
+    os.makedirs("audio", exist_ok=True)
 
-            client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+    for i, paragraph in enumerate(paragraphs):
+        audio_path = f"audio/narration_{i:02}.mp3"
 
-            audio = client.generate(
-                text=tutorial,
-                voice=Voice(
-                    voice_id="EXAVITQu4vr4xnSDxMaL",  # Rachel
-                    settings=VoiceSettings(
-                        stability=0.3,
-                        similarity_boost=0.85,
-                        style=0.7,
-                        use_speaker_boost=True
-                    )
-                ),
-                model="eleven_multilingual_v2"
-            )
-
-            save(audio, audio_path)
-        except Exception as e:
-            print("⚠️ ElevenLabs error, falling back to pyttsx3:", e)
+        if USE_ELEVENLABS and ELEVENLABS_API_KEY:
+            try:
+                client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+                audio = client.generate(
+                    text=paragraph,
+                    voice=Voice(
+                        voice_id="rwRSRQs2Lguppd3kDP6p",  # Rachel
+                        settings=VoiceSettings(
+                            stability=0.3,
+                            similarity_boost=0.85,
+                            style=0.7,
+                            use_speaker_boost=True
+                        )
+                    ),
+                    model="eleven_multilingual_v2"
+                )
+                save(audio, audio_path)
+            except Exception as e:
+                print(f"⚠️ ElevenLabs error on paragraph {i}, falling back to pyttsx3:", e)
+                engine = pyttsx3.init()
+                engine.save_to_file(paragraph, audio_path)
+                engine.runAndWait()
+        else:
             engine = pyttsx3.init()
-            engine.save_to_file(tutorial, audio_path)
+            engine.save_to_file(paragraph, audio_path)
             engine.runAndWait()
-    else:
-        engine = pyttsx3.init()
-        engine.save_to_file(tutorial, audio_path)
-        engine.runAndWait()
 
-    return {"audio_path": audio_path}
+        audio_paths.append(audio_path)
+
+    return {"paragraphs": paragraphs, "audio_paths": audio_paths}
 
 # ========== STEP 4: Create Slides ==========
 def create_slides(state):
+    import shutil
     if os.path.exists("slides"):
-        import shutil
         shutil.rmtree("slides")
     os.makedirs("slides", exist_ok=True)
 
-    tutorial = state["tutorial"]
-    paragraphs = tutorial.split("\n")
+    paragraphs = state["paragraphs"]
     slide_paths = []
 
     for i, paragraph in enumerate(paragraphs):
@@ -119,94 +138,51 @@ def create_slides(state):
 
     return {"slide_paths": slide_paths}
 
-# ========== STEP 5: Create Video ==========
+# ========== STEP 5: Create Synced Video ==========
 def create_video(state):
     topic = state["topic"]
     safe_topic = sanitize_filename(topic)
 
     base_dir = "Videos"
     os.makedirs(base_dir, exist_ok=True)
-
     output_dir = os.path.join(base_dir, safe_topic)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Move slides there
-    slide_paths = []
-    for i, slide_path in enumerate(state["slide_paths"]):
-        new_path = os.path.join(output_dir, f"slide_{i:02}.png")
-        os.rename(slide_path, new_path)
-        slide_paths.append(new_path)
+    slide_paths = state["slide_paths"]
+    audio_paths = state["audio_paths"]
 
-    # Move audio there
-    audio_src = state["audio_path"]
-    audio_dst = os.path.join(output_dir, "narration.mp3")
-    os.rename(audio_src, audio_dst)
+    clips = []
+    for i, (slide, audio) in enumerate(zip(slide_paths, audio_paths)):
+        audio_clip = AudioFileClip(audio)
+        duration = audio_clip.duration
+        img_clip = ImageClip(slide).set_duration(duration).set_audio(audio_clip)
+        clips.append(img_clip)
 
-    # Create video
-    clip = ImageSequenceClip(slide_paths, fps=1)
-    audio = AudioFileClip(audio_dst)
-    final = clip.set_audio(audio).set_duration(audio.duration)
-
-    video_filename = f"{safe_topic}_tutorial.mp4"
-    video_path = os.path.join(output_dir, video_filename)
+    final = concatenate_videoclips(clips)
+    video_path = os.path.join(output_dir, f"{safe_topic}_tutorial.mp4")
     final.write_videofile(video_path, fps=1)
 
     return {
         "video_path": video_path,
         "slide_paths": slide_paths,
-        "audio_path": audio_dst
+        "audio_path": audio_paths
     }
-
-# ========== STEP 6: Upload to YouTube (Optional) ==========
-def upload_to_youtube(state):
-    SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
-    flow = InstalledAppFlow.from_client_secrets_file("client_secrets.json", SCOPES)
-    credentials = flow.run_local_server(port=8080, prompt='consent', authorization_prompt_message='')
-
-    youtube = build("youtube", "v3", credentials=credentials)
-
-    video_path = state["video_path"]
-    topic = state["topic"]
-
-    request_body = {
-        "snippet": {
-            "title": f"Quick Tutorial: {topic}",
-            "description": f"This is a 2-minute tutorial on {topic}. Auto-generated using AI!",
-            "tags": ["AI", "tutorial", "software engineering", topic],
-            "categoryId": "28"
-        },
-        "status": {
-            "privacyStatus": "unlisted"
-        }
-    }
-
-    media = MediaFileUpload(video_path)
-    response = youtube.videos().insert(
-        part="snippet,status",
-        body=request_body,
-        media_body=media
-    ).execute()
-
-    print(f"✅ Video uploaded: https://youtu.be/{response['id']}")
-    return {"youtube_url": f"https://youtu.be/{response['id']}"}
 
 # ========== LangGraph Setup ==========
 class TutorialState(TypedDict, total=False):
     topic: str
     tutorial: str
-    audio_path: str
+    paragraphs: List[str]
     slide_paths: List[str]
+    audio_paths: List[str]
     video_path: str
-    youtube_url: str
 
 builder = StateGraph(TutorialState)
-
 builder.add_node("generate_topic", generate_topic)
 builder.add_node("generate_tutorial", generate_tutorial)
 builder.add_node("text_to_audio", text_to_audio)
 builder.add_node("create_slides", create_slides)
 builder.add_node("create_video", create_video)
-# builder.add_node("upload_to_youtube", upload_to_youtube)  # Enable if needed
 
 builder.set_entry_point("generate_topic")
 builder.add_edge("generate_topic", "generate_tutorial")
@@ -214,12 +190,10 @@ builder.add_edge("generate_tutorial", "text_to_audio")
 builder.add_edge("text_to_audio", "create_slides")
 builder.add_edge("create_slides", "create_video")
 builder.add_edge("create_video", END)
-# builder.add_edge("create_video", "upload_to_youtube")
-# builder.add_edge("upload_to_youtube", END)
 
 graph = builder.compile()
 
 # ========== Run the Flow ==========
 if __name__ == "__main__":
     final_state = graph.invoke({})
-    print("\n🎉 All done! Your tutorial has been created.")
+    print("\n🎉 All done! Your synced video tutorial has been created.")
