@@ -12,6 +12,8 @@ from moviepy.editor import concatenate_videoclips, ImageClip, AudioFileClip
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langgraph.graph import StateGraph, END
+from moviepy.editor import VideoFileClip
+
 
 load_dotenv()
 
@@ -193,7 +195,8 @@ def create_video(state):
         img_clip = ImageClip(slide).set_duration(duration).set_audio(audio_clip)
         clips.append(img_clip)
 
-    final = concatenate_videoclips(clips)
+    intro = VideoFileClip("Intro.mp4")
+    final = concatenate_videoclips([intro] + clips)
     video_path = os.path.join(output_dir, f"{safe_topic}_tutorial.mp4")
     final.write_videofile(video_path, fps=1)
 
