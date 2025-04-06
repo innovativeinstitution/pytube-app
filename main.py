@@ -174,6 +174,8 @@ def create_slides(state):
 
 # ========== STEP 5: Create Synced Video ==========
 def create_video(state):
+    import subprocess
+
     print("➡️  Step: Create Video")
     start = time.time()
 
@@ -188,6 +190,7 @@ def create_video(state):
     slide_paths = state["slide_paths"]
     audio_paths = state["audio_paths"]
 
+    # Step 1: Create generated tutorial video
     clips = []
     for i, (slide, audio) in enumerate(zip(slide_paths, audio_paths)):
         audio_clip = AudioFileClip(audio)
@@ -195,12 +198,54 @@ def create_video(state):
         img_clip = ImageClip(slide).set_duration(duration).set_audio(audio_clip)
         clips.append(img_clip)
 
-    intro = VideoFileClip("Intro.mp4")
-    final = concatenate_videoclips([intro] + clips)
-    video_path = os.path.join(output_dir, f"{safe_topic}_tutorial.mp4")
-    final.write_videofile(video_path, fps=1)
+    raw_generated_path = os.path.join(output_dir, f"{safe_topic}_tutorial_raw.mp4")
+    final = concatenate_videoclips(clips)
+    final.write_videofile(raw_generated_path, fps=1)
 
-    # Clean up
+    # Step 2: Normalize both videos for compatibility
+    def normalize_video(input_path, output_path, width=1280, height=720):
+        subprocess.run([
+            "ffmpeg", "-y", "-i", input_path,
+            "-vf", f"scale={width}:{height},fps=30",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            output_path
+        ], check=True)
+
+    intro_path = "Intro.mp4"
+    assert os.path.exists(intro_path), f"❌ Missing intro video: {intro_path}"
+    assert os.path.exists(raw_generated_path), f"❌ Missing generated video: {raw_generated_path}"
+
+    normalized_intro = os.path.join(output_dir, "intro_normalized.mp4")
+    normalized_generated = os.path.join(output_dir, "generated_normalized.mp4")
+
+    print("🎬 Normalizing videos for concat...")
+    normalize_video(intro_path, normalized_intro)
+    normalize_video(raw_generated_path, normalized_generated)
+
+    # Step 3: Create concat list
+    concat_list_path = os.path.join(output_dir, "concat_list.txt")
+    with open(concat_list_path, "w") as f:
+        f.write(f"file '{os.path.abspath(normalized_intro).replace(os.sep, '/')}'\n")
+        f.write(f"file '{os.path.abspath(normalized_generated).replace(os.sep, '/')}'\n")
+
+    print("🔗 FFmpeg concat list:")
+    with open(concat_list_path) as f:
+        print(f.read())
+
+    # Step 4: Final merge
+    final_video_path = os.path.join(output_dir, f"{safe_topic}_tutorial.mp4")
+    subprocess.run([
+        "ffmpeg", "-f", "concat", "-safe", "0",
+        "-i", concat_list_path,
+        "-c", "copy",
+        final_video_path
+    ], check=True)
+
+    # Step 5: Clean up
     if os.path.exists("audio"):
         shutil.rmtree("audio")
     if os.path.exists("slides"):
@@ -209,10 +254,11 @@ def create_video(state):
     end = time.time()
     print(f"✅ Done: Create Video in {end - start:.2f}s")
     return {
-        "video_path": video_path,
+        "video_path": final_video_path,
         "slide_paths": slide_paths,
         "audio_path": audio_paths
     }
+
 
 # ========== LangGraph Setup ==========
 class TutorialState(TypedDict, total=False):
