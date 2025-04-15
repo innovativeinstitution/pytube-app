@@ -13,6 +13,7 @@ from langchain.chat_models import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langgraph.graph import StateGraph, END
 from moviepy.editor import VideoFileClip
+from langchain.llms import Ollama
 
 
 load_dotenv()
@@ -21,12 +22,21 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 USE_ELEVENLABS = os.getenv("USE_ELEVENLABS", "false").lower() == "true"
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
-llm = ChatOpenAI(
-    model_name="gpt-4o-mini",
-    temperature=0.3,
-    max_tokens=1000,
-    openai_api_key=OPENAI_API_KEY
-)
+# Environment-driven LLM selection
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
+
+if LLM_PROVIDER == "ollama":
+    print("🤖 Using local Ollama model:", OLLAMA_MODEL)
+    llm = Ollama(model=OLLAMA_MODEL)
+else:
+    print("🌐 Using OpenAI Chat model: gpt-4o-mini")
+    llm = ChatOpenAI(
+        model_name="gpt-4o-mini",
+        temperature=0.3,
+        max_tokens=1000,
+        openai_api_key=OPENAI_API_KEY
+    )
 
 def sanitize_filename(name: str) -> str:
     name = re.sub(r'[^\w\s-]', '', name)
@@ -51,6 +61,15 @@ categories = [
     "prompt engineering",
 ]
 
+def clean_llm_output(text: str) -> str:
+    # Remove <think>...</think> blocks entirely
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+
+    # Optional: remove standalone <think> or </think> if they still exist
+    text = text.replace("<think>", "").replace("</think>", "")
+
+    return text.strip()
+
 def generate_topic(state):
     print("➡️  Step: Generate Topic")
     start = time.time()
@@ -59,7 +78,12 @@ def generate_topic(state):
     prompt = PromptTemplate.from_template(
         "Give me a unique and creative software engineering topic in the area of {category} that would make a good 2-minute tutorial."
     )
-    topic = llm.predict(prompt.format(category=category))
+    
+    if LLM_PROVIDER == "ollama":
+        raw = llm.predict(prompt.format(category=category))
+        topic = clean_llm_output(raw)
+    else:
+        topic = llm.predict(prompt.format(category=category))
 
     end = time.time()
     print(f"✅ Done: Generate Topic in {end - start:.2f}s")
@@ -77,7 +101,12 @@ def generate_tutorial(state):
         "Keep the tutorial clear, natural, and spoken-word friendly. "
         "No implementation details or technical formatting — just a clean, engaging overview."
     )
-    tutorial = llm.predict(prompt.format(topic=topic))
+    
+    if LLM_PROVIDER == "ollama":
+        raw = llm.predict(prompt.format(topic=topic))
+        tutorial = clean_llm_output(raw)
+    else:
+        tutorial = llm.predict(prompt.format(topic=topic))
 
     end = time.time()
     print(f"✅ Done: Generate Tutorial in {end - start:.2f}s")
